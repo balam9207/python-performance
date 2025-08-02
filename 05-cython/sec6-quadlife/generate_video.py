@@ -1,48 +1,17 @@
-import numpy as np
+from gtts import gTTS
+from moviepy.editor import AudioFileClip, CompositeAudioClip
 
-from gui import create_pil_image
-from patterns import get_pattern_text, convert_pattern_to_array
-from cquadlife import live
+text = "Привет, это тестовая озвучка."
+voice_file = "voice.mp3"
+music_file = "background.mp3"
+output_file = "audio_mix.mp3"
 
-SIZE_Y = 250
-SIZE_X = 400
+# Синтез речи
+tts = gTTS(text, lang="ru")
+tts.save(voice_file)
 
-
-def create_space_war_world():
-    weekender_pattern_text = get_pattern_text('weekender')
-    weekender = convert_pattern_to_array(weekender_pattern_text)
-    weekender_height = weekender.shape[0]
-    weekender_width = weekender.shape[1]
-
-    pulsar_pattern_text = get_pattern_text('pulsar')
-    pulsar = convert_pattern_to_array(pulsar_pattern_text)
-    pulsar_height = pulsar.shape[0]
-    pulsar_width = pulsar.shape[1]
-
-    my_world = np.zeros((SIZE_Y, SIZE_X), dtype=np.uint8)
-
-    for row in range(8):
-        y = 100 + row * (5 + weekender_height)
-        for col in range(16):
-            x = 10 + col * (8 + weekender_width)
-            my_world[y:y + weekender_height, x: x + weekender_width] = weekender
-
-    for row in range(3):
-        y = 25 + row * (5 + pulsar_height)
-        for col in range(22):
-            x = 5 + col * (5 + pulsar_width)
-            my_world[y:y + pulsar_height, x: x + pulsar_width] = np.where(
-                pulsar == 1, 2 + row, pulsar)
-
-    return my_world
-
-
-world = create_space_war_world()
-image = create_pil_image(world)
-image.save("frame-0000.png")
-
-for i in range(1, 500):
-    print(i)
-    world = live(world)
-    image = create_pil_image(world)
-    image.save(f"frame-{i:04d}.png")
+# Объединение с музыкой
+voice = AudioFileClip(voice_file)
+music = AudioFileClip(music_file).subclip(0, voice.duration).volumex(0.1)
+mix = CompositeAudioClip([music, voice])
+mix.write_audiofile(output_file)
