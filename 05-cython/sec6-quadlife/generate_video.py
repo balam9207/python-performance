@@ -1,48 +1,110 @@
-import numpy as np
+import os
+import time
+import requests
+from gtts import gTTS
+from moviepy.editor import (
+    VideoFileClip,
+    AudioFileClip,
+    CompositeAudioClip,
+    concatenate_videoclips,
+)
 
-from gui import create_pil_image
-from patterns import get_pattern_text, convert_pattern_to_array
-from cquadlife import live
+# === НАСТРОЙКИ ===
+RUNWAY_API_KEY = "ТВОЙ_API_КЛЮЧ_ЗДЕСЬ"
+BACKGROUND_MUSIC = "background.mp3"
 
-SIZE_Y = 250
-SIZE_X = 400
+HEADERS = {
+    "Authorization": f"Bearer {RUNWAY_API_KEY}",
+    "Content-Type": "application/json"
+}
 
+# === ЗАПРОС НА ГЕНЕРАЦИЮ ВИДЕО В RUNWAY ===
+def create_video(prompt, duration=5, seed=42, resolution="720p"):
+    payload = {
+        "prompt": prompt,
+        "seed": seed,
+        "duration": duration,
+        "output_format": "mp4",
+        "fps": 24,
+        "resolution": resolution
+    }
+    r = requests.post("https://api.runwayml.com/v2/generate/video", headers=HEADERS, json=payload)
+    if r.status_code != 202:
+        print("❌ Ошибка генерации:", r.text)
+        return None
+    status_url = r.json()["urls"]["get"]
+    print("⏳ Ожидание генерации...")
+    while True:
+        resp = requests.get(status_url, headers=HEADERS).json()
+        if resp.get("status") == "succeeded":
+            return resp["output"]["video"]
+        elif resp.get("status") == "failed":
+            print("❌ Не удалось сгенерировать сцену")
+            return None
+        time.sleep(3)
 
-def create_space_war_world():
-    weekender_pattern_text = get_pattern_text('weekender')
-    weekender = convert_pattern_to_array(weekender_pattern_text)
-    weekender_height = weekender.shape[0]
-    weekender_width = weekender.shape[1]
+def download_file(url, dest):
+    r = requests.get(url)
+    r.raise_for_status()
+    with open(dest, "wb") as f:
+        f.write(r.content)
 
-    pulsar_pattern_text = get_pattern_text('pulsar')
-    pulsar = convert_pattern_to_array(pulsar_pattern_text)
-    pulsar_height = pulsar.shape[0]
-    pulsar_width = pulsar.shape[1]
+def text_to_speech(text, filename):
+    tts = gTTS(text=text, lang="ru", slow=False)
+    tts.save(filename)
 
-    my_world = np.zeros((SIZE_Y, SIZE_X), dtype=np.uint8)
+def mix_audio(voice_path, music_path, output_path, music_volume=0.1):
+    voice = AudioFileClip(voice_path)
+    music = AudioFileClip(music_path).subclip(0, voice.duration).volumex(music_volume)
+    mixed = CompositeAudioClip([music, voice])
+    mixed.write_audiofile(output_path)
 
-    for row in range(8):
-        y = 100 + row * (5 + weekender_height)
-        for col in range(16):
-            x = 10 + col * (8 + weekender_width)
-            my_world[y:y + weekender_height, x: x + weekender_width] = weekender
+def main():
+    os.makedirs("video", exist_ok=True)
+    os.makedirs("tts", exist_ok=True)
 
-    for row in range(3):
-        y = 25 + row * (5 + pulsar_height)
-        for col in range(22):
-            x = 5 + col * (5 + pulsar_width)
-            my_world[y:y + pulsar_height, x: x + pulsar_width] = np.where(
-                pulsar == 1, 2 + row, pulsar)
+    # 1. Загрузка сценария
+    with open("script.txt", encoding="utf-8") as f:
+        scenes = [line.strip() for line in f if line.strip()]
+    if not scenes:
+        print("❗ В файле script.txt нет текста.")
+        return
 
-    return my_world
+    video_clips = []
 
+    for idx, scene_text in enumerate(scenes, 1):
+        print(f"\n🎬 Сцена {idx}: {scene_text}")
 
-world = create_space_war_world()
-image = create_pil_image(world)
-image.save("frame-0000.png")
+        # 2. Генерация видео
+        video_url = create_video(scene_text)
+        if not video_url:
+            print("⚠️ Сцена пропущена.")
+            continue
+        video_path = f"video/scene_{idx}.mp4"
+        download_file(video_url, video_path)
 
-for i in range(1, 500):
-    print(i)
-    world = live(world)
-    image = create_pil_image(world)
-    image.save(f"frame-{i:04d}.png")
+        # 3. Озвучка
+        voice_path = f"tts/voice_{idx}.mp3"
+        final_audio_path = f"tts/audio_mix_{idx}.mp3"
+        text_to_speech(scene_text, voice_path)
+
+        # 4. Микс с фоновой музыкой
+        mix_audio(voice_path, BACKGROUND_MUSIC, final_audio_path)
+
+        # 5. Комбинирование видео + озвучка
+        video = VideoFileClip(video_path)
+        audio = AudioFileClip(final_audio_path)
+        video = video.set_audio(audio)
+        video_clips.append(video)
+
+    # 6. Сборка финального видео
+    if video_clips:
+        print("\n🎞 Объединение всех сцен...")
+        final = concatenate_videoclips(video_clips)
+        final.write_videofile("final_video.mp4", codec="libx264", audio_codec="aac")
+        print("\n✅ Видео создано: final_video.mp4")
+    else:
+        print("❌ Не удалось создать ни одной сцены.")
+
+if __name__ == "__main__":
+    main()
